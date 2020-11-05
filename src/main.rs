@@ -15,7 +15,7 @@ struct Ray {
 }
 
 impl Ray {
-    // P(t) = O + tB
+    /// `P(t) = A + (t * b)`
     pub fn at(&self, t: f32) -> Point3 {
         self.origin + t * self.direction
     }
@@ -29,6 +29,10 @@ impl Ray {
     ///
     /// `blended_value = (1 - t) * start_value + t * end_value`
     pub fn color(&self) -> Color {
+        if self.hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5) {
+            return Color::new(1.0, 0.0, 0.0);
+        }
+
         let unit = self.direction.normalize();
         let t = 0.5 * (unit.y() + 1.0);
         let start_value = Color::new(1.0, 1.0, 1.0); // white
@@ -36,6 +40,42 @@ impl Ray {
         let blended_value = (1.0 - t) * start_value + t * end_value;
         // let blended_value = start_value.lerp(end_value, t);
         blended_value
+    }
+
+    /// Ray-Sphere Intersection:
+    ///
+    /// For a sphere with radius `R` centered at the origin:
+    ///
+    /// - A point `(x, y, z)` is **ON** the sphere if `(x² + y² + z²) = R²`;
+    /// - `(x, y, z)` is **inside** the sphere if `(x² + y² + z²) < R²`;
+    /// - `(x, y, z)` is **outside** the sphere if `(x² + y² + z²) > R²`;
+    ///
+    /// If the sphere center is at `(Cₓ, Cᵧ, C𝓏)` then the equation becomes:
+    ///
+    /// - `(x - Cₓ)² + (y - Cᵧ)² + (z - C𝓏)² = r²`;
+    ///
+    /// A vector from center `C = (Cₓ, Cᵧ, C𝓏)` to point `P = (x, y, z)` is
+    /// `(P - C)` and therefore:
+    ///
+    /// - `(P - C) ⋅ (P - C) = (x - Cₓ)² + (y - Cᵧ)² + (z - C𝓏)²`;
+    /// - Shorthand `(P - C) ⋅ (P - C) = r²`;
+    ///
+    /// Substituting with `P(t) = A + (t * b) we get a quadratic equation that:
+    ///
+    /// - `0` roots means no intersection (ray is outside);
+    /// - `1` root means one intersection (ray touches once);
+    /// - `2` roots means two intersections (ray touches twice);
+    ///
+    /// Refer to sphere_roots.jpg for a visualization.
+    pub fn hit_sphere(&self, center: Point3, radius: f32) -> bool {
+        let origin_to_center = self.origin - center;
+        let a = self.direction.dot(self.direction);
+        let b = 2.0 * origin_to_center.dot(self.direction);
+        let c = origin_to_center.dot(origin_to_center) - radius * radius;
+        // NOTE(alex): Solving the quadratic equation to determine if there is an intersection,
+        // and how many.
+        let discriminant = b * b - 4.0 * a * c;
+        discriminant > 0.0
     }
 }
 
