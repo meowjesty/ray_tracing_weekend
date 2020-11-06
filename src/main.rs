@@ -29,12 +29,23 @@ impl Ray {
     ///
     /// `blended_value = (1 - t) * start_value + t * end_value`
     pub fn color(&self) -> Color {
-        if self.hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5) {
-            return Color::new(1.0, 0.0, 0.0);
+        let mut t = self.hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5);
+        if t > 0.0 {
+            // NOTE(alex): The outward normal (sphere) is in the direction of the hit point
+            // minus the center:
+            // P - C
+            // We're using normals with unit length.
+            let unit_normal = (self.at(t) - Vec3::new(0.0, 0.0, -1.0)).normalize();
+            return 0.5
+                * Color::new(
+                    unit_normal.x() + 1.0,
+                    unit_normal.y() + 1.0,
+                    unit_normal.z() + 1.0,
+                );
         }
 
-        let unit = self.direction.normalize();
-        let t = 0.5 * (unit.y() + 1.0);
+        let unit_direction = self.direction.normalize();
+        t = 0.5 * (unit_direction.y() + 1.0);
         let start_value = Color::new(1.0, 1.0, 1.0); // white
         let end_value = Color::new(0.5, 0.7, 1.0); // blue
         let blended_value = (1.0 - t) * start_value + t * end_value;
@@ -67,7 +78,7 @@ impl Ray {
     /// - `2` roots means two intersections (ray touches twice);
     ///
     /// Refer to sphere_roots.jpg for a visualization.
-    pub fn hit_sphere(&self, center: Point3, radius: f32) -> bool {
+    pub fn hit_sphere(&self, center: Point3, radius: f32) -> f32 {
         let origin_to_center = self.origin - center;
         let a = self.direction.dot(self.direction);
         let b = 2.0 * origin_to_center.dot(self.direction);
@@ -75,7 +86,11 @@ impl Ray {
         // NOTE(alex): Solving the quadratic equation to determine if there is an intersection,
         // and how many.
         let discriminant = b * b - 4.0 * a * c;
-        discriminant > 0.0
+        if discriminant < 0.0 {
+            -1.0
+        } else {
+            (-b - discriminant.sqrt()) / (2.0 * a)
+        }
     }
 }
 
