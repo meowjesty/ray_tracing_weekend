@@ -5,11 +5,63 @@ use std::{
 
 use glam::Vec3;
 
+#[derive(Debug)]
+pub struct HitRecord {
+    point: Point3,
+    normal: Vec3,
+    t: f32,
+}
+
+/// This trait helps when dealing with multiple spheres (or whatever objects).
+pub trait Hittable {
+    /// The hit only "counts" if `tₘᵢₙ < t < tₘₐₓ`.
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord>;
+}
+
+#[derive(Debug)]
+pub struct Sphere {
+    center: Point3,
+    radius: f32,
+}
+
+impl Hittable for Sphere {
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+        let oc = ray.origin - self.center;
+        let a = ray.direction.length_squared();
+        let half_b = oc.dot(ray.direction);
+        let c = oc.length_squared() - self.radius * self.radius;
+        let discriminant = half_b * half_b - a * c;
+        if discriminant < 0.0 {
+            return None;
+        }
+        let sqrtd = discriminant.sqrt();
+
+        // NOTE(alex): Find the nearest root that lies in the acceptable range.
+        let mut root = (-half_b - sqrtd) / a;
+        if root < t_min || root > t_max {
+            root = (-half_b + sqrtd) / a;
+
+            if root < t_min || root > t_max {
+                return None;
+            }
+        }
+
+        let t = root;
+        let point = ray.at(t);
+        let hit_record = HitRecord {
+            t,
+            point,
+            normal: (point - self.center) / self.radius,
+        };
+        Some(hit_record)
+    }
+}
+
 type Point3 = glam::Vec3;
 type Color = glam::Vec3;
 
 #[derive(Debug)]
-struct Ray {
+pub struct Ray {
     pub origin: Point3,
     pub direction: glam::Vec3,
 }
