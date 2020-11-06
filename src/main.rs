@@ -1,3 +1,5 @@
+#![feature(clamp)]
+
 use std::{
     fs::{File, OpenOptions},
     io::Write,
@@ -5,7 +7,56 @@ use std::{
     sync::Arc,
 };
 
+use rand::Rng;
+
 use glam::Vec3;
+
+#[derive(Debug, Clone)]
+pub struct Camera {
+    aspect_ratio: f32,
+    viewport_height: f32,
+    viewport_width: f32,
+    focal_length: f32,
+    origin: Point3,
+    lower_left_corner: Point3,
+    horizontal: Vec3,
+    vertical: Vec3,
+}
+
+impl Camera {
+    pub fn get_ray(&self, u: f32, v: f32) -> Ray {
+        Ray {
+            origin: self.origin,
+            direction: self.lower_left_corner + u * self.horizontal + v * self.vertical
+                - self.origin,
+        }
+    }
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        let aspect_ratio = 16.0 / 9.0;
+        let viewport_height = 2.0;
+        let viewport_width = aspect_ratio * viewport_height;
+        let focal_length = 1.0;
+        let origin = Point3::default();
+        let horizontal = Vec3::new(viewport_width, 0.0, 0.0);
+        let vertical = Vec3::new(0.0, viewport_height, 0.0);
+        let lower_left_corner =
+            origin - horizontal / 2.0 - vertical / 2.0 - Vec3::new(0.0, 0.0, focal_length);
+
+        Self {
+            aspect_ratio,
+            viewport_height,
+            viewport_width,
+            focal_length,
+            origin,
+            lower_left_corner,
+            horizontal,
+            vertical,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct HitRecord {
@@ -200,27 +251,38 @@ impl Ray {
     }
 }
 
-fn write_color(pixel_color: Color) -> String {
-    let r: u32 = (255.999 * pixel_color.x()) as u32;
-    let g: u32 = (255.999 * pixel_color.y()) as u32;
-    let b: u32 = (255.999 * pixel_color.z()) as u32;
+fn write_color(pixel_color: Color, samples_per_pixel: u32) -> String {
+    let r = pixel_color.x();
+    let g = pixel_color.y();
+    let b = pixel_color.z();
+
+    // NOTE(alex): Divide the color by the number of samples. (Antialiasing)
+    let scale = 1.0 / samples_per_pixel as f32;
+    let r = r * scale;
+    let g = g * scale;
+    let b = b * scale;
+
+    let r: u32 = (256.0 * r.clamp(0.0, 0.999)) as u32;
+    let g: u32 = (256.0 * g.clamp(0.0, 0.999)) as u32;
+    let b: u32 = (256.0 * b.clamp(0.0, 0.999)) as u32;
 
     format!("{} {} {}\n", r, g, b)
 }
 
-fn listing_24() -> std::io::Result<()> {
+fn listing_30() -> std::io::Result<()> {
     println!("Listing 9");
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("./images/listing-24.ppm")?;
+        .open("./images/listing-30.ppm")?;
     let mut file_contents = String::with_capacity(65_536);
 
     // Image
     let aspect_ratio = 16.0 / 9.0;
     let image_width = 400;
     let image_height = (image_width as f32 / aspect_ratio) as u32;
+    let samples_per_pixel = 100;
 
     // World
     let world = HittableList {
@@ -237,14 +299,10 @@ fn listing_24() -> std::io::Result<()> {
     };
 
     // Camera
-    let viewport_height = 2.0;
-    let viewport_width = aspect_ratio * viewport_height;
-    let focal_length = 1.0;
-    let origin = Point3::zero();
-    let horizontal = Vec3::new(viewport_width, 0.0, 0.0);
-    let vertical = Vec3::new(0.0, viewport_height, 0.0);
-    let lower_left_corner =
-        origin - horizontal / 2.0 - vertical / 2.0 - Vec3::new(0.0, 0.0, focal_length);
+    let camera = Camera::default();
+
+    // Random
+    let mut rng = rand::thread_rng();
 
     // Render
     file_contents.push_str(&format!("P3\n{} {}\n255\n", image_width, image_height));
@@ -252,45 +310,19 @@ fn listing_24() -> std::io::Result<()> {
     for j in (0..image_height).rev() {
         println!("Scanlines remaining: {}", j);
         for i in 0..image_width {
-            let u = i as f32 / (image_width - 1) as f32;
-            let v = j as f32 / (image_height - 1) as f32;
-            let ray = Ray {
-                origin,
-                direction: lower_left_corner + u * horizontal + v * vertical - origin,
-            };
-            let pixel_color = ray.color(&world);
-            file_contents.push_str(&write_color(pixel_color));
-        }
-    }
+            let mut pixel_color = Color::default();
 
-    file.write_all(file_contents.as_bytes())?;
-    println!("Done!");
+            for s in 0..samples_per_pixel {
+                let random_x: f32 = rng.gen();
+                let random_y: f32 = rng.gen();
 
-    Ok(())
-}
+                let u = (i as f32 + random_x) / (image_width - 1) as f32;
+                let v = (j as f32 + random_y) / (image_height - 1) as f32;
 
-fn listing_1() -> std::io::Result<()> {
-    println!("Listing 1");
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open("./images/listing-1.ppm")?;
-    let image_width = 256;
-    let image_height = 256;
-    let mut file_contents = String::with_capacity(65_536);
-
-    file_contents.push_str(&format!("P3\n{} {}\n255\n", image_width, image_height));
-
-    for j in (0..image_height).rev() {
-        println!("Scanlines remaining: {}", j);
-        for i in 0..image_width {
-            let pixel_color = Color::new(
-                i as f32 / (image_width - 1) as f32,
-                j as f32 / (image_height - 1) as f32,
-                0.25,
-            );
-            file_contents.push_str(&write_color(pixel_color));
+                let ray = camera.get_ray(u, v);
+                pixel_color += ray.color(&world);
+            }
+            file_contents.push_str(&write_color(pixel_color, samples_per_pixel));
         }
     }
 
@@ -303,5 +335,5 @@ fn listing_1() -> std::io::Result<()> {
 fn main() {
     // let _app = listing_1();
     // let _app = listing_9();
-    let _app = listing_24();
+    let _app = listing_30();
 }
