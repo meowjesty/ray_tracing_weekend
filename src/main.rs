@@ -80,16 +80,25 @@ impl Ray {
     /// Refer to sphere_roots.jpg for a visualization.
     pub fn hit_sphere(&self, center: Point3, radius: f32) -> f32 {
         let origin_to_center = self.origin - center;
-        let a = self.direction.dot(self.direction);
-        let b = 2.0 * origin_to_center.dot(self.direction);
-        let c = origin_to_center.dot(origin_to_center) - radius * radius;
+        // NOTE(alex): A vector dotted with itself is equal to the squared length of that vector.
+        // V ⋅ V = V.length²
+        let a = self.direction.length_squared();
+        // NOTE(alex): If `b = 2h`, the equation becomes:
+        // `(-2h +- sqrt((2h)² - 4ac)) / 2a` ->
+        // `(-2h +- 2 * sqrt(h² - ac)) / 2a` ->
+        // `(-h +- sqrt(h² - ac)) / a`
+        let half_b = origin_to_center.dot(self.direction);
+        let c = origin_to_center.length_squared() - radius * radius;
         // NOTE(alex): Solving the quadratic equation to determine if there is an intersection,
         // and how many.
-        let discriminant = b * b - 4.0 * a * c;
+        // The discriminant is the `sqrt(b² -4ac)` part of the equation, here in simplified form
+        // thanks to the `2h` idea.
+        let discriminant = half_b * half_b - a * c;
+
         if discriminant < 0.0 {
             -1.0
         } else {
-            (-b - discriminant.sqrt()) / (2.0 * a)
+            (-half_b - discriminant.sqrt()) / a
         }
     }
 }
