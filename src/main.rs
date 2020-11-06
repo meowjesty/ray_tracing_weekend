@@ -1,6 +1,8 @@
 use std::{
     fs::{File, OpenOptions},
     io::Write,
+    rc::Rc,
+    sync::Arc,
 };
 
 use glam::Vec3;
@@ -30,13 +32,13 @@ pub struct HitRecord {
 }
 
 impl HitRecord {
-    pub fn set_face_normal(&mut self, ray: &Ray, outward_normal: Vec3) {
-        self.front_face = ray.direction.dot(outward_normal) < 0.0;
-        self.normal = if self.front_face {
-            outward_normal
+    pub fn face_normal(ray: &Ray, outward_normal: Vec3) -> (bool, Vec3) {
+        let front_face = ray.direction.dot(outward_normal) < 0.0;
+        if front_face {
+            (front_face, outward_normal)
         } else {
-            -outward_normal
-        };
+            (front_face, -outward_normal)
+        }
     }
 }
 
@@ -44,6 +46,26 @@ impl HitRecord {
 pub trait Hittable {
     /// The hit only "counts" if `tₘᵢₙ < t < tₘₐₓ`.
     fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord>;
+}
+
+pub struct HittableList {
+    list: Vec<Rc<dyn Hittable>>,
+}
+
+impl Hittable for HittableList {
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+        let mut hit = None;
+        let mut closest_so_far = t_max;
+        for obj in self.list.iter() {
+            hit = obj.hit(ray, t_min, closest_so_far);
+            match hit {
+                Some(ref record) => closest_so_far = record.t,
+                None => (),
+            }
+        }
+
+        hit
+    }
 }
 
 #[derive(Debug)]
@@ -77,13 +99,13 @@ impl Hittable for Sphere {
         let t = root;
         let point = ray.at(t);
         let outward_normal = (point - self.center) / self.radius;
-        let mut hit_record = HitRecord {
+        let (front_face, normal) = HitRecord::face_normal(ray, outward_normal);
+        let hit_record = HitRecord {
             t,
             point,
-            normal: (point - self.center) / self.radius,
-            front_face: false,
+            normal,
+            front_face,
         };
-        hit_record.set_face_normal(ray, outward_normal);
         Some(hit_record)
     }
 }
