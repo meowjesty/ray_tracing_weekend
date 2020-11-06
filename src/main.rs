@@ -7,7 +7,7 @@ use std::{
 
 use glam::Vec3;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct HitRecord {
     point: Point3,
     normal: Vec3,
@@ -57,9 +57,12 @@ impl Hittable for HittableList {
         let mut hit = None;
         let mut closest_so_far = t_max;
         for obj in self.list.iter() {
-            hit = obj.hit(ray, t_min, closest_so_far);
-            match hit {
-                Some(ref record) => closest_so_far = record.t,
+            let hit_something = obj.hit(ray, t_min, closest_so_far);
+            match hit_something {
+                Some(ref record) => {
+                    hit = Some(record.clone());
+                    closest_so_far = record.t;
+                }
                 None => (),
             }
         }
@@ -133,24 +136,13 @@ impl Ray {
     /// - In between -> blend (linear interpolation);
     ///
     /// `blended_value = (1 - t) * start_value + t * end_value`
-    pub fn color(&self) -> Color {
-        let mut t = self.hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5);
-        if t > 0.0 {
-            // NOTE(alex): The outward normal (sphere) is in the direction of the hit point
-            // minus the center:
-            // P - C
-            // We're using normals with unit length.
-            let unit_normal = (self.at(t) - Vec3::new(0.0, 0.0, -1.0)).normalize();
-            return 0.5
-                * Color::new(
-                    unit_normal.x() + 1.0,
-                    unit_normal.y() + 1.0,
-                    unit_normal.z() + 1.0,
-                );
+    pub fn color(&self, world: &dyn Hittable) -> Color {
+        if let Some(hit) = world.hit(self, 0.0, f32::INFINITY) {
+            return 0.5 * (hit.normal + Color::new(1.0, 1.0, 1.0));
         }
 
         let unit_direction = self.direction.normalize();
-        t = 0.5 * (unit_direction.y() + 1.0);
+        let t = 0.5 * (unit_direction.y() + 1.0);
         let start_value = Color::new(1.0, 1.0, 1.0); // white
         let end_value = Color::new(0.5, 0.7, 1.0); // blue
         let blended_value = (1.0 - t) * start_value + t * end_value;
@@ -216,19 +208,33 @@ fn write_color(pixel_color: Color) -> String {
     format!("{} {} {}\n", r, g, b)
 }
 
-fn listing_9() -> std::io::Result<()> {
+fn listing_24() -> std::io::Result<()> {
     println!("Listing 9");
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("./images/listing-9.ppm")?;
+        .open("./images/listing-24.ppm")?;
     let mut file_contents = String::with_capacity(65_536);
 
     // Image
     let aspect_ratio = 16.0 / 9.0;
     let image_width = 400;
     let image_height = (image_width as f32 / aspect_ratio) as u32;
+
+    // World
+    let world = HittableList {
+        list: vec![
+            Rc::new(Sphere {
+                center: Point3::new(0.0, 0.0, -1.0),
+                radius: 0.5,
+            }),
+            Rc::new(Sphere {
+                center: Point3::new(0.0, -100.5, -1.0),
+                radius: 100.0,
+            }),
+        ],
+    };
 
     // Camera
     let viewport_height = 2.0;
@@ -252,7 +258,7 @@ fn listing_9() -> std::io::Result<()> {
                 origin,
                 direction: lower_left_corner + u * horizontal + v * vertical - origin,
             };
-            let pixel_color = ray.color();
+            let pixel_color = ray.color(&world);
             file_contents.push_str(&write_color(pixel_color));
         }
     }
@@ -295,6 +301,7 @@ fn listing_1() -> std::io::Result<()> {
 }
 
 fn main() {
-    let _app = listing_1();
-    let _app = listing_9();
+    // let _app = listing_1();
+    // let _app = listing_9();
+    let _app = listing_24();
 }
