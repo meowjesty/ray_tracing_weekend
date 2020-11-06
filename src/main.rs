@@ -10,6 +10,34 @@ pub struct HitRecord {
     point: Point3,
     normal: Vec3,
     t: f32,
+    /// The ray may be coming from outside or inside, and there are 2 ways of setting up the normal
+    // to handle it:
+    ///
+    /// 1. The normal always points from center to intersection;
+    ///     - if the ray intersects from the outside, the normal will point against it;
+    ///     - if the ray intersects from the inside, the normal will point with it;
+    ///     - to calculate the color, just check if the normal is in favor or against the ray;
+    ///     - `if ray.direction.dot(outward_normal) > 0.0 then "ray inside" else "ray outside"`;
+    /// 2. The normal always points against the ray:
+    ///     - if the ray intersects from the outside, the normal will point against it;
+    ///     - if the ray intersects from the inside, the normal will point against it;
+    ///     - to calculate the color, just check if the normal is in favor or against the ray;
+    ///     - cannot use the dot product to determine which side of the surface the ray is on,
+    ///     must store it;
+    ///
+    /// We're using `2` here.
+    front_face: bool,
+}
+
+impl HitRecord {
+    pub fn set_face_normal(&mut self, ray: &Ray, outward_normal: Vec3) {
+        self.front_face = ray.direction.dot(outward_normal) < 0.0;
+        self.normal = if self.front_face {
+            outward_normal
+        } else {
+            -outward_normal
+        };
+    }
 }
 
 /// This trait helps when dealing with multiple spheres (or whatever objects).
@@ -48,11 +76,14 @@ impl Hittable for Sphere {
 
         let t = root;
         let point = ray.at(t);
-        let hit_record = HitRecord {
+        let outward_normal = (point - self.center) / self.radius;
+        let mut hit_record = HitRecord {
             t,
             point,
             normal: (point - self.center) / self.radius,
+            front_face: false,
         };
+        hit_record.set_face_normal(ray, outward_normal);
         Some(hit_record)
     }
 }
