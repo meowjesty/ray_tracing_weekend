@@ -2,7 +2,7 @@
 
 use std::{
     fs::{File, OpenOptions},
-    io::Write,
+    io::{BufWriter, Write},
     rc::Rc,
     sync::Arc,
 };
@@ -269,20 +269,45 @@ fn write_color(pixel_color: Color, samples_per_pixel: u32) -> String {
     format!("{} {} {}\n", r, g, b)
 }
 
+fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
+    let r = pixel_color.x();
+    let g = pixel_color.y();
+    let b = pixel_color.z();
+
+    // NOTE(alex): Divide the color by the number of samples. (Antialiasing)
+    let scale = 1.0 / samples_per_pixel as f32;
+    let r = r * scale;
+    let g = g * scale;
+    let b = b * scale;
+
+    let r: u8 = (256.0 * r.clamp(0.0, 0.999)) as u8;
+    let g: u8 = (256.0 * g.clamp(0.0, 0.999)) as u8;
+    let b: u8 = (256.0 * b.clamp(0.0, 0.999)) as u8;
+
+    vec![r, g, b]
+}
+
 fn listing_30() -> std::io::Result<()> {
-    println!("Listing 9");
+    println!("Listing 30");
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open("./images/listing-30.ppm")?;
-    let mut file_contents = String::with_capacity(65_536);
+        // .open("./images/listing-30.ppm")?;
+        .open("./images/listing-30.png")?;
+    // let decoder = png::Decoder::new(file);
+    let buf_writer = BufWriter::new(file);
 
     // Image
     let aspect_ratio = 16.0 / 9.0;
     let image_width = 400;
     let image_height = (image_width as f32 / aspect_ratio) as u32;
     let samples_per_pixel = 100;
+    let mut encoder = png::Encoder::new(buf_writer, image_width, image_height);
+    encoder.set_color(png::ColorType::RGB);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    let mut image_buffer = Vec::with_capacity(65_653);
 
     // World
     let world = HittableList {
@@ -305,10 +330,8 @@ fn listing_30() -> std::io::Result<()> {
     let mut rng = rand::thread_rng();
 
     // Render
-    file_contents.push_str(&format!("P3\n{} {}\n255\n", image_width, image_height));
-
+    println!("Scanline running ...");
     for j in (0..image_height).rev() {
-        println!("Scanlines remaining: {}", j);
         for i in 0..image_width {
             let mut pixel_color = Color::default();
 
@@ -322,11 +345,14 @@ fn listing_30() -> std::io::Result<()> {
                 let ray = camera.get_ray(u, v);
                 pixel_color += ray.color(&world);
             }
-            file_contents.push_str(&write_color(pixel_color, samples_per_pixel));
+            image_buffer.push(get_color(pixel_color, samples_per_pixel));
         }
     }
+    println!("Scanline finished!");
 
-    file.write_all(file_contents.as_bytes())?;
+    let flat: Vec<u8> = image_buffer.into_iter().flatten().collect();
+    println!("Writing to file.");
+    writer.write_image_data(&flat)?;
     println!("Done!");
 
     Ok(())
