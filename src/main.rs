@@ -199,7 +199,7 @@ impl Ray {
         // reflecting at `t = -0.0000001` or `t = 0.0000001` (floating point approximations), so
         // we ingore hits very near zero.
         if let Some(hit) = world.hit(self, 0.001, f32::INFINITY) {
-            let target: Point3 = hit.point + hit.normal + Vec3::random_in_unit_sphere();
+            let target: Point3 = hit.point + hit.normal + Vec3::random_unit_vector();
             // NOTE(alex): This ray represents the random point we've selected inside the
             // hit sphere, so `origin` is a random point and `direction` is a vector from
             // the hit surface point to this random point.
@@ -272,7 +272,16 @@ impl Ray {
 pub trait Vec3Random {
     fn random() -> Vec3;
     fn random_bounded(min: f32, max: f32) -> Vec3;
+    /// This is used in a rejection selection.
     fn random_in_unit_sphere() -> Vec3;
+    /// True lambertian Reflection:
+    ///
+    /// Pick random points on the surface of the unit sphere, offset along the surface normal.
+    /// Picking random points can be achieved by picking random points **in** the unit sphere,
+    /// and then normalizing those.
+    ///
+    /// See the `generating_a_random_unit_vector` picture for reference.
+    fn random_unit_vector() -> Vec3;
 }
 
 impl Vec3Random for Vec3 {
@@ -300,6 +309,10 @@ impl Vec3Random for Vec3 {
                 return point;
             }
         }
+    }
+
+    fn random_unit_vector() -> Vec3 {
+        Vec3::random_in_unit_sphere().normalize()
     }
 }
 
@@ -350,14 +363,15 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 /// as the ray origin. Pick a random point `S` inside this sphere and send a ray from the hit
 /// point `P` to the random point `S`: `(S - P)` vector.
 
-fn listing_30() -> std::io::Result<()> {
-    println!("Listing 30");
-    let mut file = OpenOptions::new()
+fn app() -> std::io::Result<()> {
+    println!("Open file and generate image!");
+    let filename = "True Lambertian Reflection";
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         // .open("./images/listing-30.ppm")?;
-        .open("./images/listing-30.png")?;
+        .open(format!("./images/{}.png", filename))?;
     // let decoder = png::Decoder::new(file);
     let buf_writer = BufWriter::new(file);
 
@@ -426,5 +440,5 @@ fn listing_30() -> std::io::Result<()> {
 fn main() {
     // let _app = listing_1();
     // let _app = listing_9();
-    let _app = listing_30();
+    let _app = app();
 }
