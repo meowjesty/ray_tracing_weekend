@@ -11,6 +11,9 @@ use rand::Rng;
 
 use glam::Vec3;
 
+mod vec3ext;
+use vec3ext::*;
+
 #[derive(Debug, Clone)]
 pub struct Camera {
     aspect_ratio: f32,
@@ -132,6 +135,11 @@ impl Material for LambertianMaterial {
 #[derive(Debug, Clone)]
 pub struct MetalMaterial {
     albedo: Color,
+    /// Randomize the reflected direction by using a small sphere and choosing a new endpoint for
+    /// the ray. Refer to `generating_fuzzed_reflection_rays` for a visualization.
+    /// The fuzziness is the radius of this sphere, and if it scatters bellow the hit surface, then
+    /// it counts as absorbed.
+    fuzz: f32,
 }
 
 impl Material for MetalMaterial {
@@ -139,7 +147,7 @@ impl Material for MetalMaterial {
         let reflected = ray_in.direction.reflect(hit.normal);
         let scattered = Ray {
             origin: hit.point,
-            direction: reflected,
+            direction: reflected + self.fuzz * Vec3::random_in_unit_sphere(),
         };
         if scattered.direction.dot(hit.normal) > 0.0 {
             Some((scattered, self.albedo))
@@ -148,23 +156,6 @@ impl Material for MetalMaterial {
         }
     }
 }
-
-// impl LambertianMaterial {
-//     pub fn scatter(&self, ray_in: &Ray, hit: &HitRecord) -> (Ray, Color) {
-//         let mut scatter_direction = hit.normal + Vec3::random_unit_vector();
-
-//         // Catch degenerate scatter direction.
-//         if scatter_direction.near_zero() {
-//             scatter_direction = hit.normal;
-//         }
-
-//         let scattered = Ray {
-//             origin: hit.point,
-//             direction: scatter_direction,
-//         };
-//         (scattered, self.albedo)
-//     }
-// }
 
 impl Hittable for HittableList {
     fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Rc<dyn Material>)> {
@@ -336,109 +327,6 @@ impl Ray {
     }
 }
 
-pub trait Vec3Random {
-    fn random() -> Vec3;
-    fn random_bounded(min: f32, max: f32) -> Vec3;
-    /// This is used in a rejection selection.
-    fn random_in_unit_sphere() -> Vec3;
-    /// True lambertian Reflection:
-    ///
-    /// Pick random points on the surface of the unit sphere, offset along the surface normal.
-    /// Picking random points can be achieved by picking random points **in** the unit sphere,
-    /// and then normalizing those.
-    ///
-    /// See the `generating_a_random_unit_vector` picture for reference.
-    fn random_unit_vector() -> Vec3;
-    /// Uniform scatter direction for all angles away from the hit point, with no dependence on
-    /// the angle from the normal. (Used in raytracers before the adoption of Lambertian diffuse)
-    fn random_in_hemisphere(normal: Vec3) -> Vec3;
-}
-
-pub trait Vec3NearZero {
-    /// `hit.normal + Vec3::random_unit_vector()` sum may be zero if the random unit vector is
-    /// exactly opposite of the normal. This leads to bad numbers, so we intercept this condition.
-    fn near_zero(&self) -> bool;
-}
-
-pub trait Vec3Reflect {
-    fn reflect(self, normal: Vec3) -> Vec3;
-}
-
-impl Vec3Reflect for Vec3 {
-    fn reflect(self, normal: Vec3) -> Vec3 {
-        self - 2.0 * self.dot(normal) * normal
-    }
-}
-
-impl Vec3NearZero for Vec3 {
-    fn near_zero(&self) -> bool {
-        // Return true if the vector is close to zero in all dimensions.
-        let s = 1e-8;
-        self.x().abs() < s && self.y().abs() < s && self.z().abs() < s
-    }
-}
-
-impl Vec3Random for Vec3 {
-    fn random() -> Vec3 {
-        let mut rng = rand::thread_rng();
-        let x = rng.gen_range(-1.0..=1.0);
-        let y = rng.gen_range(-1.0..=1.0);
-        let z = rng.gen_range(-1.0..=1.0);
-        Vec3::new(x, y, z)
-    }
-
-    fn random_bounded(min: f32, max: f32) -> Vec3 {
-        let mut rng = rand::thread_rng();
-        let x = rng.gen_range(min..=max);
-        let y = rng.gen_range(min..=max);
-        let z = rng.gen_range(min..=max);
-        Vec3::new(x, y, z)
-    }
-
-    fn random_in_unit_sphere() -> Vec3 {
-        loop {
-            let point = Vec3::random_bounded(-1.0, 1.0);
-
-            if point.length_squared() < 1.0 {
-                return point;
-            }
-        }
-    }
-
-    fn random_unit_vector() -> Vec3 {
-        Vec3::random_in_unit_sphere().normalize()
-    }
-
-    fn random_in_hemisphere(normal: Vec3) -> Vec3 {
-        let in_unit_sphere = Vec3::random_in_unit_sphere();
-
-        // NOTE(alex): In the same hemisphere as the normal
-        if in_unit_sphere.dot(normal) > 0.0 {
-            in_unit_sphere
-        } else {
-            -in_unit_sphere
-        }
-    }
-}
-
-fn write_color(pixel_color: Color, samples_per_pixel: u32) -> String {
-    let r = pixel_color.x();
-    let g = pixel_color.y();
-    let b = pixel_color.z();
-
-    // NOTE(alex): Divide the color by the number of samples. (Antialiasing)
-    let scale = 1.0 / samples_per_pixel as f32;
-    let r = r * scale;
-    let g = g * scale;
-    let b = b * scale;
-
-    let r: u32 = (256.0 * r.clamp(0.0, 0.999)) as u32;
-    let g: u32 = (256.0 * g.clamp(0.0, 0.999)) as u32;
-    let b: u32 = (256.0 * b.clamp(0.0, 0.999)) as u32;
-
-    format!("{} {} {}\n", r, g, b)
-}
-
 fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
     let r = pixel_color.x();
     let g = pixel_color.y();
@@ -470,7 +358,7 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 
 fn app() -> std::io::Result<()> {
     println!("Open file and generate image!");
-    let filename = "Metal";
+    let filename = "Fuzzed Metal";
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -501,9 +389,11 @@ fn app() -> std::io::Result<()> {
     });
     let material_left = Rc::new(MetalMaterial {
         albedo: Color::new(0.8, 0.8, 0.8),
+        fuzz: 0.3,
     });
     let material_right = Rc::new(MetalMaterial {
         albedo: Color::new(0.8, 0.6, 0.2),
+        fuzz: 1.0,
     });
     let world = HittableList {
         list: vec![
