@@ -199,7 +199,8 @@ impl Ray {
         // reflecting at `t = -0.0000001` or `t = 0.0000001` (floating point approximations), so
         // we ingore hits very near zero.
         if let Some(hit) = world.hit(self, 0.001, f32::INFINITY) {
-            let target: Point3 = hit.point + hit.normal + Vec3::random_unit_vector();
+            // let target: Point3 = hit.point + hit.normal + Vec3::random_unit_vector();
+            let target: Point3 = hit.point + Vec3::random_in_hemisphere(hit.normal);
             // NOTE(alex): This ray represents the random point we've selected inside the
             // hit sphere, so `origin` is a random point and `direction` is a vector from
             // the hit surface point to this random point.
@@ -282,6 +283,9 @@ pub trait Vec3Random {
     ///
     /// See the `generating_a_random_unit_vector` picture for reference.
     fn random_unit_vector() -> Vec3;
+    /// Uniform scatter direction for all angles away from the hit point, with no dependence on
+    /// the angle from the normal. (Used in raytracers before the adoption of Lambertian diffuse)
+    fn random_in_hemisphere(normal: Vec3) -> Vec3;
 }
 
 impl Vec3Random for Vec3 {
@@ -313,6 +317,17 @@ impl Vec3Random for Vec3 {
 
     fn random_unit_vector() -> Vec3 {
         Vec3::random_in_unit_sphere().normalize()
+    }
+
+    fn random_in_hemisphere(normal: Vec3) -> Vec3 {
+        let in_unit_sphere = Vec3::random_in_unit_sphere();
+
+        // NOTE(alex): In the same hemisphere as the normal
+        if in_unit_sphere.dot(normal) > 0.0 {
+            in_unit_sphere
+        } else {
+            -in_unit_sphere
+        }
     }
 }
 
@@ -365,7 +380,7 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 
 fn app() -> std::io::Result<()> {
     println!("Open file and generate image!");
-    let filename = "True Lambertian Reflection";
+    let filename = "8.25";
     let file = OpenOptions::new()
         .read(true)
         .write(true)
