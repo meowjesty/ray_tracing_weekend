@@ -58,7 +58,7 @@ impl Default for Camera {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub struct HitRecord {
     point: Point3,
     normal: Vec3,
@@ -96,40 +96,111 @@ impl HitRecord {
 /// This trait helps when dealing with multiple spheres (or whatever objects).
 pub trait Hittable {
     /// The hit only "counts" if `tₘᵢₙ < t < tₘₐₓ`.
-    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord>;
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Rc<dyn Material>)>;
 }
 
 pub struct HittableList {
     list: Vec<Rc<dyn Hittable>>,
 }
 
+pub trait Material {
+    fn scatter(&self, ray_in: &Ray, hit: &HitRecord) -> Option<(Ray, Color)>;
+}
+
+#[derive(Debug, Clone)]
+pub struct LambertianMaterial {
+    albedo: Color,
+}
+
+impl Material for LambertianMaterial {
+    fn scatter(&self, ray_in: &Ray, hit: &HitRecord) -> Option<(Ray, Color)> {
+        let mut scatter_direction = hit.normal + Vec3::random_unit_vector();
+
+        // Catch degenerate scatter direction.
+        if scatter_direction.near_zero() {
+            scatter_direction = hit.normal;
+        }
+
+        let scattered = Ray {
+            origin: hit.point,
+            direction: scatter_direction,
+        };
+        Some((scattered, self.albedo))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MetalMaterial {
+    albedo: Color,
+}
+
+impl Material for MetalMaterial {
+    fn scatter(&self, ray_in: &Ray, hit: &HitRecord) -> Option<(Ray, Color)> {
+        let reflected = ray_in.direction.reflect(hit.normal);
+        let scattered = Ray {
+            origin: hit.point,
+            direction: reflected,
+        };
+        if scattered.direction.dot(hit.normal) > 0.0 {
+            Some((scattered, self.albedo))
+        } else {
+            None
+        }
+    }
+}
+
+// impl LambertianMaterial {
+//     pub fn scatter(&self, ray_in: &Ray, hit: &HitRecord) -> (Ray, Color) {
+//         let mut scatter_direction = hit.normal + Vec3::random_unit_vector();
+
+//         // Catch degenerate scatter direction.
+//         if scatter_direction.near_zero() {
+//             scatter_direction = hit.normal;
+//         }
+
+//         let scattered = Ray {
+//             origin: hit.point,
+//             direction: scatter_direction,
+//         };
+//         (scattered, self.albedo)
+//     }
+// }
+
 impl Hittable for HittableList {
-    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Rc<dyn Material>)> {
         let mut hit = None;
         let mut closest_so_far = t_max;
+        let mut mat = None;
         for obj in self.list.iter() {
             let hit_something = obj.hit(ray, t_min, closest_so_far);
             match hit_something {
-                Some(ref record) => {
+                Some((ref record, material)) => {
                     hit = Some(record.clone());
                     closest_so_far = record.t;
+                    mat = Some(material)
                 }
                 None => (),
             }
         }
 
-        hit
+        if hit.is_some() && mat.is_some() {
+            Some((hit.unwrap(), mat.unwrap()))
+        } else {
+            None
+        }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Sphere {
     center: Point3,
     radius: f32,
+    /// Tells how the rays interact with the surface.
+    material: Rc<dyn Material>,
 }
 
 impl Hittable for Sphere {
-    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Rc<dyn Material>)> {
         let oc = ray.origin - self.center;
         let a = ray.direction.length_squared();
         let half_b = oc.dot(ray.direction);
@@ -160,7 +231,7 @@ impl Hittable for Sphere {
             normal,
             front_face,
         };
-        Some(hit_record)
+        Some((hit_record, self.material.clone()))
     }
 }
 
@@ -198,17 +269,12 @@ impl Ray {
         // NOTE(alex): `0.001` here fixes the shadow _acne_ problem, when the ray hits and is
         // reflecting at `t = -0.0000001` or `t = 0.0000001` (floating point approximations), so
         // we ingore hits very near zero.
-        if let Some(hit) = world.hit(self, 0.001, f32::INFINITY) {
-            // let target: Point3 = hit.point + hit.normal + Vec3::random_unit_vector();
-            let target: Point3 = hit.point + Vec3::random_in_hemisphere(hit.normal);
-            // NOTE(alex): This ray represents the random point we've selected inside the
-            // hit sphere, so `origin` is a random point and `direction` is a vector from
-            // the hit surface point to this random point.
-            let random_ray = Ray {
-                origin: hit.point,
-                direction: target - hit.point,
-            };
-            0.5 * random_ray.color(world, depth - 1)
+        if let Some((hit, material)) = world.hit(self, 0.001, f32::INFINITY) {
+            if let Some((scattered, attenuation)) = material.scatter(self, &hit) {
+                attenuation * scattered.color(world, depth - 1)
+            } else {
+                Color::new(0.0, 0.0, 0.0)
+            }
         } else {
             let unit_direction = self.direction.normalize();
             let t = 0.5 * (unit_direction.y() + 1.0);
@@ -286,6 +352,30 @@ pub trait Vec3Random {
     /// Uniform scatter direction for all angles away from the hit point, with no dependence on
     /// the angle from the normal. (Used in raytracers before the adoption of Lambertian diffuse)
     fn random_in_hemisphere(normal: Vec3) -> Vec3;
+}
+
+pub trait Vec3NearZero {
+    /// `hit.normal + Vec3::random_unit_vector()` sum may be zero if the random unit vector is
+    /// exactly opposite of the normal. This leads to bad numbers, so we intercept this condition.
+    fn near_zero(&self) -> bool;
+}
+
+pub trait Vec3Reflect {
+    fn reflect(self, normal: Vec3) -> Vec3;
+}
+
+impl Vec3Reflect for Vec3 {
+    fn reflect(self, normal: Vec3) -> Vec3 {
+        self - 2.0 * self.dot(normal) * normal
+    }
+}
+
+impl Vec3NearZero for Vec3 {
+    fn near_zero(&self) -> bool {
+        // Return true if the vector is close to zero in all dimensions.
+        let s = 1e-8;
+        self.x().abs() < s && self.y().abs() < s && self.z().abs() < s
+    }
 }
 
 impl Vec3Random for Vec3 {
@@ -380,7 +470,7 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 
 fn app() -> std::io::Result<()> {
     println!("Open file and generate image!");
-    let filename = "8.25";
+    let filename = "Metal";
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -403,15 +493,39 @@ fn app() -> std::io::Result<()> {
     let max_depth = 50;
 
     // World
+    let material_ground = Rc::new(LambertianMaterial {
+        albedo: Color::new(0.8, 0.8, 0.0),
+    });
+    let material_center = Rc::new(LambertianMaterial {
+        albedo: Color::new(0.7, 0.3, 0.3),
+    });
+    let material_left = Rc::new(MetalMaterial {
+        albedo: Color::new(0.8, 0.8, 0.8),
+    });
+    let material_right = Rc::new(MetalMaterial {
+        albedo: Color::new(0.8, 0.6, 0.2),
+    });
     let world = HittableList {
         list: vec![
             Rc::new(Sphere {
-                center: Point3::new(0.0, 0.0, -1.0),
-                radius: 0.5,
-            }),
-            Rc::new(Sphere {
                 center: Point3::new(0.0, -100.5, -1.0),
                 radius: 100.0,
+                material: material_ground,
+            }),
+            Rc::new(Sphere {
+                center: Point3::new(0.0, 0.0, -1.0),
+                radius: 0.5,
+                material: material_center,
+            }),
+            Rc::new(Sphere {
+                center: Point3::new(-1.0, 0.0, -1.0),
+                radius: 0.5,
+                material: material_left,
+            }),
+            Rc::new(Sphere {
+                center: Point3::new(1.0, 0.0, -1.0),
+                radius: 0.5,
+                material: material_right,
             }),
         ],
     };
