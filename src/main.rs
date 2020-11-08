@@ -187,18 +187,36 @@ impl Ray {
     /// - In between -> blend (linear interpolation);
     ///
     /// `blended_value = (1 - t) * start_value + t * end_value`
-    pub fn color(&self, world: &dyn Hittable) -> Color {
-        if let Some(hit) = world.hit(self, 0.0, f32::INFINITY) {
-            return 0.5 * (hit.normal + Color::new(1.0, 1.0, 1.0));
+    ///
+    /// `depth` prevents possible stack overflow due to recursive nature.
+    pub fn color(&self, world: &dyn Hittable, depth: u32) -> Color {
+        // NOTE(alex): Too many recursions, the ray bounced too much, no more light is gathered.
+        if depth == 0 {
+            return Color::new(0.0, 0.0, 0.0);
         }
 
-        let unit_direction = self.direction.normalize();
-        let t = 0.5 * (unit_direction.y() + 1.0);
-        let start_value = Color::new(1.0, 1.0, 1.0); // white
-        let end_value = Color::new(0.5, 0.7, 1.0); // blue
-        let blended_value = (1.0 - t) * start_value + t * end_value;
-        // let blended_value = start_value.lerp(end_value, t);
-        blended_value
+        // NOTE(alex): `0.001` here fixes the shadow _acne_ problem, when the ray hits and is
+        // reflecting at `t = -0.0000001` or `t = 0.0000001` (floating point approximations), so
+        // we ingore hits very near zero.
+        if let Some(hit) = world.hit(self, 0.001, f32::INFINITY) {
+            let target: Point3 = hit.point + hit.normal + Vec3::random_in_unit_sphere();
+            // NOTE(alex): This ray represents the random point we've selected inside the
+            // hit sphere, so `origin` is a random point and `direction` is a vector from
+            // the hit surface point to this random point.
+            let random_ray = Ray {
+                origin: hit.point,
+                direction: target - hit.point,
+            };
+            0.5 * random_ray.color(world, depth - 1)
+        } else {
+            let unit_direction = self.direction.normalize();
+            let t = 0.5 * (unit_direction.y() + 1.0);
+            let start_value = Color::new(1.0, 1.0, 1.0); // white
+            let end_value = Color::new(0.5, 0.7, 1.0); // blue
+            let blended_value = (1.0 - t) * start_value + t * end_value;
+            // let blended_value = start_value.lerp(end_value, t);
+            blended_value
+        }
     }
 
     /// Ray-Sphere Intersection:
@@ -251,6 +269,40 @@ impl Ray {
     }
 }
 
+pub trait Vec3Random {
+    fn random() -> Vec3;
+    fn random_bounded(min: f32, max: f32) -> Vec3;
+    fn random_in_unit_sphere() -> Vec3;
+}
+
+impl Vec3Random for Vec3 {
+    fn random() -> Vec3 {
+        let mut rng = rand::thread_rng();
+        let x = rng.gen_range(-1.0..=1.0);
+        let y = rng.gen_range(-1.0..=1.0);
+        let z = rng.gen_range(-1.0..=1.0);
+        Vec3::new(x, y, z)
+    }
+
+    fn random_bounded(min: f32, max: f32) -> Vec3 {
+        let mut rng = rand::thread_rng();
+        let x = rng.gen_range(min..=max);
+        let y = rng.gen_range(min..=max);
+        let z = rng.gen_range(min..=max);
+        Vec3::new(x, y, z)
+    }
+
+    fn random_in_unit_sphere() -> Vec3 {
+        loop {
+            let point = Vec3::random_bounded(-1.0, 1.0);
+
+            if point.length_squared() < 1.0 {
+                return point;
+            }
+        }
+    }
+}
+
 fn write_color(pixel_color: Color, samples_per_pixel: u32) -> String {
     let r = pixel_color.x();
     let g = pixel_color.y();
@@ -275,10 +327,11 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
     let b = pixel_color.z();
 
     // NOTE(alex): Divide the color by the number of samples. (Antialiasing)
+    // NOTE(alex): Square root for gamma-correction (for gamma = 2.0).
     let scale = 1.0 / samples_per_pixel as f32;
-    let r = r * scale;
-    let g = g * scale;
-    let b = b * scale;
+    let r = (r * scale).sqrt();
+    let g = (g * scale).sqrt();
+    let b = (b * scale).sqrt();
 
     let r: u8 = (256.0 * r.clamp(0.0, 0.999)) as u8;
     let g: u8 = (256.0 * g.clamp(0.0, 0.999)) as u8;
@@ -286,6 +339,16 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 
     vec![r, g, b]
 }
+
+/// Hack for rays hitting a diffuse (matte) surface:
+/// There are 2 unit radius spheres tangent to the hit point `P` of a surface. They have
+/// a center point `(P + n)` and `(P - n)`, where `n` is the normal of the surface.
+/// - Sphere with center `(P + n)` is outside the surface;
+/// - Sphere with center `(P - n)` is inside the surface;
+///
+/// Select the tangent unit radius sphere that is on the same side of the surface
+/// as the ray origin. Pick a random point `S` inside this sphere and send a ray from the hit
+/// point `P` to the random point `S`: `(S - P)` vector.
 
 fn listing_30() -> std::io::Result<()> {
     println!("Listing 30");
@@ -308,6 +371,7 @@ fn listing_30() -> std::io::Result<()> {
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header()?;
     let mut image_buffer = Vec::with_capacity(65_653);
+    let max_depth = 50;
 
     // World
     let world = HittableList {
@@ -332,6 +396,7 @@ fn listing_30() -> std::io::Result<()> {
     // Render
     println!("Scanline running ...");
     for j in (0..image_height).rev() {
+        println!("Scanlines remaining {}.", j);
         for i in 0..image_width {
             let mut pixel_color = Color::default();
 
@@ -343,7 +408,7 @@ fn listing_30() -> std::io::Result<()> {
                 let v = (j as f32 + random_y) / (image_height - 1) as f32;
 
                 let ray = camera.get_ray(u, v);
-                pixel_color += ray.color(&world);
+                pixel_color += ray.color(&world, max_depth);
             }
             image_buffer.push(get_color(pixel_color, samples_per_pixel));
         }

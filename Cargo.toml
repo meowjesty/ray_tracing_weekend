@@ -8,5 +8,5 @@ edition = "2018"
 
 [dependencies]
 glam = {version = "*" }
-rand = "*"
+rand = { git = "https://github.com/rust-random/rand", branch = "master" }
 png = "*"
