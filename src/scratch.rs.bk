@@ -1,0 +1,39 @@
+// Good ideas, but the implementation is wrong.
+let img_buf: Vec<u8> = (0..image_height)
+        .into_par_iter()
+        .rev()
+        .fold(
+            || vec![0; 65_653],
+            |mut img_buffer: Vec<u8>, j: u32| {
+                println!("Scanlines remaining {}.", j);
+                img_buffer = (0..image_width)
+                    .into_par_iter()
+                    .fold(
+                        || vec![vec![0; 3]; 65_653],
+                        |mut image_buffer: Vec<Vec<u8>>, i: u32| {
+                            let mut rng = rand::thread_rng();
+                            let mut pixel_color = Color::default();
+
+                            for s in 0..samples_per_pixel {
+                                let random_x: f32 = rng.gen();
+                                let random_y: f32 = rng.gen();
+
+                                let u = (i as f32 + random_x) / (image_width - 1) as f32;
+                                let v = (j as f32 + random_y) / (image_height - 1) as f32;
+
+                                let ray = camera.get_ray(u, v);
+                                pixel_color += ray.color(&world, max_depth);
+                            }
+                            image_buffer
+                                .insert(j as usize, get_color(pixel_color, samples_per_pixel));
+                            image_buffer
+                        },
+                    )
+                    .flatten()
+                    .flatten()
+                    .collect();
+                img_buffer
+            },
+        )
+        .flatten()
+        .collect();

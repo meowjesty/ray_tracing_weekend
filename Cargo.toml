@@ -10,3 +10,4 @@ edition = "2018"
 glam = {version = "*" }
 rand = { git = "https://github.com/rust-random/rand", branch = "master" }
 png = "*"
+rayon = "*"

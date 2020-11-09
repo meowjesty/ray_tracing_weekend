@@ -1,6 +1,7 @@
 #![feature(clamp)]
 
 use std::{
+    f32::consts::PI,
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
     rc::Rc,
@@ -8,6 +9,7 @@ use std::{
 };
 
 use rand::Rng;
+use rayon::prelude::*;
 
 use glam::Vec3;
 
@@ -19,10 +21,6 @@ use vec3ext::*;
 
 #[derive(Debug, Clone)]
 pub struct Camera {
-    aspect_ratio: f32,
-    viewport_height: f32,
-    viewport_width: f32,
-    focal_length: f32,
     origin: Point3,
     lower_left_corner: Point3,
     horizontal: Vec3,
@@ -30,36 +28,31 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn get_ray(&self, u: f32, v: f32) -> Ray {
-        Ray {
-            origin: self.origin,
-            direction: self.lower_left_corner + u * self.horizontal + v * self.vertical
-                - self.origin,
-        }
-    }
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        let aspect_ratio = 16.0 / 9.0;
-        let viewport_height = 2.0;
+    pub fn new(vertical_fov: f32, aspect_ratio: f32) -> Self {
+        let theta = vertical_fov.to_radians();
+        let h = (theta / 2.0).tan();
+        let viewport_height = 2.0 * h;
         let viewport_width = aspect_ratio * viewport_height;
+
         let focal_length = 1.0;
-        let origin = Point3::default();
+        let origin = Point3::new(0.0, 0.0, 0.0);
         let horizontal = Vec3::new(viewport_width, 0.0, 0.0);
         let vertical = Vec3::new(0.0, viewport_height, 0.0);
         let lower_left_corner =
             origin - horizontal / 2.0 - vertical / 2.0 - Vec3::new(0.0, 0.0, focal_length);
 
         Self {
-            aspect_ratio,
-            viewport_height,
-            viewport_width,
-            focal_length,
             origin,
-            lower_left_corner,
             horizontal,
             vertical,
+            lower_left_corner,
+        }
+    }
+    pub fn get_ray(&self, u: f32, v: f32) -> Ray {
+        Ray {
+            origin: self.origin,
+            direction: self.lower_left_corner + u * self.horizontal + v * self.vertical
+                - self.origin,
         }
     }
 }
@@ -100,13 +93,13 @@ impl HitRecord {
 }
 
 /// This trait helps when dealing with multiple spheres (or whatever objects).
-pub trait Hittable {
+pub trait Hittable: Send + Sync {
     /// The hit only "counts" if `tₘᵢₙ < t < tₘₐₓ`.
-    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Rc<dyn Material>)>;
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Arc<dyn Material>)>;
 }
 
 pub struct HittableList {
-    list: Vec<Rc<dyn Hittable>>,
+    list: Vec<Arc<dyn Hittable>>,
 }
 
 pub trait Material {
@@ -216,7 +209,7 @@ impl Material for DialetricMaterial {
 }
 
 impl Hittable for HittableList {
-    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Rc<dyn Material>)> {
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Arc<dyn Material>)> {
         let mut hit = None;
         let mut closest_so_far = t_max;
         let mut mat = None;
@@ -245,11 +238,14 @@ pub struct Sphere {
     center: Point3,
     radius: f32,
     /// Tells how the rays interact with the surface.
-    material: Rc<dyn Material>,
+    material: Arc<dyn Material>,
 }
 
+unsafe impl Send for Sphere {}
+unsafe impl Sync for Sphere {}
+
 impl Hittable for Sphere {
-    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Rc<dyn Material>)> {
+    fn hit(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<(HitRecord, Arc<dyn Material>)> {
         let oc = ray.origin - self.center;
         let a = ray.direction.length_squared();
         let half_b = oc.dot(ray.direction);
@@ -416,7 +412,7 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 
 fn app() -> std::io::Result<()> {
     println!("Open file and generate image!");
-    let filename = "Hollow glass sphere";
+    let filename = "Wide-angle view";
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -429,67 +425,88 @@ fn app() -> std::io::Result<()> {
     // Image
     let aspect_ratio = 16.0 / 9.0;
     let image_width = 400;
+    // let image_width = 1024;
     let image_height = (image_width as f32 / aspect_ratio) as u32;
     let samples_per_pixel = 100;
     let mut encoder = png::Encoder::new(buf_writer, image_width, image_height);
     encoder.set_color(png::ColorType::RGB);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header()?;
-    let mut image_buffer = Vec::with_capacity(65_653);
+    let mut image_buffer: Vec<Vec<u8>> = Vec::with_capacity(65_653);
     let max_depth = 50;
 
     // World
-    let material_ground = Rc::new(LambertianMaterial {
+    let r = (PI / 4.0).cos();
+    let material_ground = Arc::new(LambertianMaterial {
         albedo: Color::new(0.8, 0.8, 0.0),
     });
-    let material_center = Rc::new(LambertianMaterial {
+    let material_center = Arc::new(LambertianMaterial {
         albedo: Color::new(0.1, 0.2, 0.5),
     });
-    let material_left = Rc::new(DialetricMaterial {
+    let material_left = Arc::new(DialetricMaterial {
         index_of_refraction: 1.5,
     });
-    let material_right = Rc::new(MetalMaterial {
+    let material_right = Arc::new(MetalMaterial {
         albedo: Color::new(0.8, 0.6, 0.2),
         fuzz: 0.0,
     });
     let world = HittableList {
         list: vec![
-            Rc::new(Sphere {
-                center: Point3::new(0.0, -100.5, -1.0),
-                radius: 100.0,
-                material: material_ground,
+            Arc::new(Sphere {
+                center: Point3::new(-r, 0.0, -1.0),
+                radius: r,
+                material: Arc::new(LambertianMaterial {
+                    albedo: Color::new(0.0, 0.0, 1.0),
+                }),
             }),
-            Rc::new(Sphere {
-                center: Point3::new(0.0, 0.0, -1.0),
-                radius: 0.5,
-                material: material_center,
-            }),
-            Rc::new(Sphere {
-                center: Point3::new(-1.0, 0.0, -1.0),
-                radius: 0.5,
-                material: material_left.clone(),
-            }),
-            Rc::new(Sphere {
-                center: Point3::new(-1.0, 0.0, -1.0),
-                radius: -0.4,
-                material: material_left,
-            }),
-            Rc::new(Sphere {
-                center: Point3::new(1.0, 0.0, -1.0),
-                radius: 0.5,
-                material: material_right,
+            Arc::new(Sphere {
+                center: Point3::new(r, 0.0, -1.0),
+                radius: r,
+                material: Arc::new(LambertianMaterial {
+                    albedo: Color::new(1.0, 0.0, 0.0),
+                }),
             }),
         ],
     };
+    // let world = HittableList {
+    //     list: vec![
+    //         Arc::new(Sphere {
+    //             center: Point3::new(0.0, -100.5, -1.0),
+    //             radius: 100.0,
+    //             material: material_ground,
+    //         }),
+    //         Arc::new(Sphere {
+    //             center: Point3::new(0.0, 0.0, -1.0),
+    //             radius: 0.5,
+    //             material: material_center,
+    //         }),
+    //         Arc::new(Sphere {
+    //             center: Point3::new(-1.0, 0.0, -1.0),
+    //             radius: 0.5,
+    //             material: material_left.clone(),
+    //         }),
+    //         Arc::new(Sphere {
+    //             center: Point3::new(-1.0, 0.0, -1.0),
+    //             radius: -0.4,
+    //             material: material_left,
+    //         }),
+    //         Arc::new(Sphere {
+    //             center: Point3::new(1.0, 0.0, -1.0),
+    //             radius: 0.5,
+    //             material: material_right,
+    //         }),
+    //     ],
+    // };
 
     // Camera
-    let camera = Camera::default();
+    let camera = Camera::new(90.0, aspect_ratio);
 
     // Random
     let mut rng = rand::thread_rng();
 
     // Render
     println!("Scanline running ...");
+
     for j in (0..image_height).rev() {
         println!("Scanlines remaining {}.", j);
         for i in 0..image_width {
