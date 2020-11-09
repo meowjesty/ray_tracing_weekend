@@ -28,18 +28,26 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(vertical_fov: f32, aspect_ratio: f32) -> Self {
+    pub fn new(
+        look_from: Point3,
+        look_at: Point3,
+        view_up: Vec3,
+        vertical_fov: f32,
+        aspect_ratio: f32,
+    ) -> Self {
         let theta = vertical_fov.to_radians();
         let h = (theta / 2.0).tan();
         let viewport_height = 2.0 * h;
         let viewport_width = aspect_ratio * viewport_height;
 
-        let focal_length = 1.0;
-        let origin = Point3::new(0.0, 0.0, 0.0);
-        let horizontal = Vec3::new(viewport_width, 0.0, 0.0);
-        let vertical = Vec3::new(0.0, viewport_height, 0.0);
-        let lower_left_corner =
-            origin - horizontal / 2.0 - vertical / 2.0 - Vec3::new(0.0, 0.0, focal_length);
+        let w = (look_from - look_at).normalize();
+        let u = view_up.cross(w).normalize();
+        let v = w.cross(u);
+
+        let origin = look_from;
+        let horizontal = viewport_width * u;
+        let vertical = viewport_height * v;
+        let lower_left_corner = origin - horizontal / 2.0 - vertical / 2.0 - w;
 
         Self {
             origin,
@@ -48,10 +56,10 @@ impl Camera {
             lower_left_corner,
         }
     }
-    pub fn get_ray(&self, u: f32, v: f32) -> Ray {
+    pub fn get_ray(&self, s: f32, t: f32) -> Ray {
         Ray {
             origin: self.origin,
-            direction: self.lower_left_corner + u * self.horizontal + v * self.vertical
+            direction: self.lower_left_corner + s * self.horizontal + t * self.vertical
                 - self.origin,
         }
     }
@@ -412,7 +420,7 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 
 fn app() -> std::io::Result<()> {
     println!("Open file and generate image!");
-    let filename = "Wide-angle view";
+    let filename = "Zoom in";
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -450,56 +458,62 @@ fn app() -> std::io::Result<()> {
         albedo: Color::new(0.8, 0.6, 0.2),
         fuzz: 0.0,
     });
-    let world = HittableList {
-        list: vec![
-            Arc::new(Sphere {
-                center: Point3::new(-r, 0.0, -1.0),
-                radius: r,
-                material: Arc::new(LambertianMaterial {
-                    albedo: Color::new(0.0, 0.0, 1.0),
-                }),
-            }),
-            Arc::new(Sphere {
-                center: Point3::new(r, 0.0, -1.0),
-                radius: r,
-                material: Arc::new(LambertianMaterial {
-                    albedo: Color::new(1.0, 0.0, 0.0),
-                }),
-            }),
-        ],
-    };
     // let world = HittableList {
     //     list: vec![
     //         Arc::new(Sphere {
-    //             center: Point3::new(0.0, -100.5, -1.0),
-    //             radius: 100.0,
-    //             material: material_ground,
+    //             center: Point3::new(-r, 0.0, -1.0),
+    //             radius: r,
+    //             material: Arc::new(LambertianMaterial {
+    //                 albedo: Color::new(0.0, 0.0, 1.0),
+    //             }),
     //         }),
     //         Arc::new(Sphere {
-    //             center: Point3::new(0.0, 0.0, -1.0),
-    //             radius: 0.5,
-    //             material: material_center,
-    //         }),
-    //         Arc::new(Sphere {
-    //             center: Point3::new(-1.0, 0.0, -1.0),
-    //             radius: 0.5,
-    //             material: material_left.clone(),
-    //         }),
-    //         Arc::new(Sphere {
-    //             center: Point3::new(-1.0, 0.0, -1.0),
-    //             radius: -0.4,
-    //             material: material_left,
-    //         }),
-    //         Arc::new(Sphere {
-    //             center: Point3::new(1.0, 0.0, -1.0),
-    //             radius: 0.5,
-    //             material: material_right,
+    //             center: Point3::new(r, 0.0, -1.0),
+    //             radius: r,
+    //             material: Arc::new(LambertianMaterial {
+    //                 albedo: Color::new(1.0, 0.0, 0.0),
+    //             }),
     //         }),
     //     ],
     // };
+    let world = HittableList {
+        list: vec![
+            Arc::new(Sphere {
+                center: Point3::new(0.0, -100.5, -1.0),
+                radius: 100.0,
+                material: material_ground,
+            }),
+            Arc::new(Sphere {
+                center: Point3::new(0.0, 0.0, -1.0),
+                radius: 0.5,
+                material: material_center,
+            }),
+            Arc::new(Sphere {
+                center: Point3::new(-1.0, 0.0, -1.0),
+                radius: 0.5,
+                material: material_left.clone(),
+            }),
+            Arc::new(Sphere {
+                center: Point3::new(-1.0, 0.0, -1.0),
+                radius: -0.45,
+                material: material_left,
+            }),
+            Arc::new(Sphere {
+                center: Point3::new(1.0, 0.0, -1.0),
+                radius: 0.5,
+                material: material_right,
+            }),
+        ],
+    };
 
     // Camera
-    let camera = Camera::new(90.0, aspect_ratio);
+    let camera = Camera::new(
+        Point3::new(-2.0, 2.0, 1.0),
+        Point3::new(0.0, 0.0, -1.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        20.0,
+        aspect_ratio,
+    );
 
     // Random
     let mut rng = rand::thread_rng();
