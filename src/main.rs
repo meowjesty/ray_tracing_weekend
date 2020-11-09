@@ -14,6 +14,9 @@ use glam::Vec3;
 mod vec3ext;
 use vec3ext::*;
 
+/// Dieletrics are clear materials (water, glass, diamonds, ...), when a light ray hits them
+/// it splits into a reflected ray and a refracted (transmitted) ray.
+
 #[derive(Debug, Clone)]
 pub struct Camera {
     aspect_ratio: f32,
@@ -154,6 +157,61 @@ impl Material for MetalMaterial {
         } else {
             None
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DialetricMaterial {
+    index_of_refraction: f32,
+}
+
+impl DialetricMaterial {
+    /// Schlick's approximation for reflectance.
+    pub fn reflectance(cosine: f32, ref_index: f32) -> f32 {
+        let mut r0 = (1.0 - ref_index) / (1.0 + ref_index);
+        r0 = r0 * r0;
+        r0 + (1.0 - r0) * (1.0 - cosine).powi(5)
+    }
+}
+
+impl Material for DialetricMaterial {
+    fn scatter(&self, ray_in: &Ray, hit: &HitRecord) -> Option<(Ray, Color)> {
+        // NOTE(alex): The glass surface absorbs nothing.
+        let attenuation = Color::new(1.0, 1.0, 1.0);
+        let refraction_ratio = if hit.front_face {
+            1.0 / self.index_of_refraction
+        } else {
+            self.index_of_refraction
+        };
+
+        let unit_direction = ray_in.direction.normalize();
+
+        // NOTE(alex): When the ray is in the material with higher refractive index, there is no
+        // real solution to Snell's law, this means no refraction possible.
+        // Consider the case where the ray is inside glass (`n = 1.5`) and
+        // outside is air (`n = 1.0`):
+        // `sinθ = (1.5 / 1.0) * sinθ`, `sinθ` cannot be greater than `1`, so if:
+        // `(1.5 / 1.0) * sinθ > 1.0` the equality is broken and no solution exists (no refraction).
+        let cos_theta = (-unit_direction).dot(hit.normal).min(1.0);
+        let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
+        let cannot_refract = refraction_ratio * sin_theta > 1.0;
+        let mut rng = rand::thread_rng();
+        let direction = if cannot_refract
+            || DialetricMaterial::reflectance(cos_theta, refraction_ratio) > rng.gen()
+        {
+            // Must reflect
+            unit_direction.reflect(hit.normal)
+        } else {
+            // Can refract
+            unit_direction.refract(hit.normal, refraction_ratio)
+        };
+
+        let scattered = Ray {
+            origin: hit.point,
+            direction,
+        };
+
+        Some((scattered, attenuation))
     }
 }
 
@@ -358,7 +416,7 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 
 fn app() -> std::io::Result<()> {
     println!("Open file and generate image!");
-    let filename = "Fuzzed Metal";
+    let filename = "Hollow glass sphere";
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -385,15 +443,14 @@ fn app() -> std::io::Result<()> {
         albedo: Color::new(0.8, 0.8, 0.0),
     });
     let material_center = Rc::new(LambertianMaterial {
-        albedo: Color::new(0.7, 0.3, 0.3),
+        albedo: Color::new(0.1, 0.2, 0.5),
     });
-    let material_left = Rc::new(MetalMaterial {
-        albedo: Color::new(0.8, 0.8, 0.8),
-        fuzz: 0.3,
+    let material_left = Rc::new(DialetricMaterial {
+        index_of_refraction: 1.5,
     });
     let material_right = Rc::new(MetalMaterial {
         albedo: Color::new(0.8, 0.6, 0.2),
-        fuzz: 1.0,
+        fuzz: 0.0,
     });
     let world = HittableList {
         list: vec![
@@ -410,6 +467,11 @@ fn app() -> std::io::Result<()> {
             Rc::new(Sphere {
                 center: Point3::new(-1.0, 0.0, -1.0),
                 radius: 0.5,
+                material: material_left.clone(),
+            }),
+            Rc::new(Sphere {
+                center: Point3::new(-1.0, 0.0, -1.0),
+                radius: -0.4,
                 material: material_left,
             }),
             Rc::new(Sphere {

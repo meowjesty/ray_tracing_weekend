@@ -35,6 +35,30 @@ impl Vec3Reflect for Vec3 {
     }
 }
 
+pub trait Vec3Refract {
+    /// Snell's law describes the refraction:
+    ///
+    /// `n * sinθ = n' * sinθ'`
+    ///
+    /// `n` is eta `n'` is eta prime.
+    ///
+    /// ```
+    /// R'⊥ = n / n' (R + cosθ * n)
+    /// R'∥ = - √(−1 − |R'⊥|² * n)
+    /// ```
+    fn refract(self, normal: Vec3, eta_over_eta_prime: f32) -> Vec3;
+}
+
+impl Vec3Refract for Vec3 {
+    fn refract(self, normal: Vec3, eta_over_eta_prime: f32) -> Vec3 {
+        let negative_uv = -self;
+        let cosine_theta = negative_uv.dot(normal).min(1.0);
+        let r_out_perpendicular = eta_over_eta_prime * (self + cosine_theta * normal);
+        let r_out_parallel = -(1.0 - r_out_perpendicular.length_squared()).abs().sqrt() * normal;
+        r_out_perpendicular + r_out_parallel
+    }
+}
+
 impl Vec3NearZero for Vec3 {
     fn near_zero(&self) -> bool {
         // Return true if the vector is close to zero in all dimensions.
