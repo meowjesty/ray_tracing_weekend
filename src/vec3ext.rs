@@ -17,6 +17,9 @@ pub trait Vec3Random {
     /// Uniform scatter direction for all angles away from the hit point, with no dependence on
     /// the angle from the normal. (Used in raytracers before the adoption of Lambertian diffuse)
     fn random_in_hemisphere(normal: Vec3) -> Vec3;
+
+    /// Generate random point inside unit disk (blur).
+    fn random_in_unit_disk() -> Vec3;
 }
 
 pub trait Vec3NearZero {
@@ -106,6 +109,16 @@ impl Vec3Random for Vec3 {
             in_unit_sphere
         } else {
             -in_unit_sphere
+        }
+    }
+
+    fn random_in_unit_disk() -> Vec3 {
+        loop {
+            let mut rng = rand::thread_rng();
+            let point = Vec3::new(rng.gen_range(-1.0..=1.0), rng.gen_range(-1.0..=1.0), 0.0);
+            if point.length_squared() < 1.0 {
+                return point;
+            }
         }
     }
 }

@@ -25,6 +25,10 @@ pub struct Camera {
     lower_left_corner: Point3,
     horizontal: Vec3,
     vertical: Vec3,
+    u: Vec3,
+    v: Vec3,
+    w: Vec3,
+    lens_radius: f32,
 }
 
 impl Camera {
@@ -34,6 +38,8 @@ impl Camera {
         view_up: Vec3,
         vertical_fov: f32,
         aspect_ratio: f32,
+        aperture: f32,
+        focus_distance: f32,
     ) -> Self {
         let theta = vertical_fov.to_radians();
         let h = (theta / 2.0).tan();
@@ -45,22 +51,31 @@ impl Camera {
         let v = w.cross(u);
 
         let origin = look_from;
-        let horizontal = viewport_width * u;
-        let vertical = viewport_height * v;
-        let lower_left_corner = origin - horizontal / 2.0 - vertical / 2.0 - w;
+        let horizontal = focus_distance * viewport_width * u;
+        let vertical = focus_distance * viewport_height * v;
+        let lower_left_corner = origin - horizontal / 2.0 - vertical / 2.0 - focus_distance * w;
+        let lens_radius = aperture / 2.0;
 
         Self {
             origin,
             horizontal,
             vertical,
             lower_left_corner,
+            u,
+            v,
+            w,
+            lens_radius,
         }
     }
     pub fn get_ray(&self, s: f32, t: f32) -> Ray {
+        let rd = self.lens_radius * Vec3::random_in_unit_disk();
+        let offset = self.u * rd.x() + self.v * rd.y();
+
         Ray {
-            origin: self.origin,
+            origin: self.origin + offset,
             direction: self.lower_left_corner + s * self.horizontal + t * self.vertical
-                - self.origin,
+                - self.origin
+                - offset,
         }
     }
 }
@@ -418,9 +433,94 @@ fn get_color(pixel_color: Color, samples_per_pixel: u32) -> Vec<u8> {
 /// as the ray origin. Pick a random point `S` inside this sphere and send a ray from the hit
 /// point `P` to the random point `S`: `(S - P)` vector.
 
+fn random_scene() -> HittableList {
+    let mut rng = rand::thread_rng();
+
+    let ground = Arc::new(Sphere {
+        center: Point3::new(0.0, -1000.0, 0.0),
+        radius: 1000.0,
+        material: Arc::new(LambertianMaterial {
+            albedo: Color::new(0.5, 0.5, 0.5),
+        }),
+    });
+
+    let mut world = HittableList {
+        list: Vec::with_capacity(24),
+    };
+
+    for a in -11..11 {
+        for b in -11..11 {
+            let choose_material: f32 = rng.gen();
+            let center = Point3::new(
+                a as f32 + 0.9 * rng.gen::<f32>(),
+                0.2,
+                b as f32 + 0.9 * rng.gen::<f32>(),
+            );
+
+            if (center - Point3::new(4.0, 0.2, 0.0)).length() > 0.9 {
+                let sphere = if choose_material < 0.8 {
+                    // diffuse
+                    let albedo = Color::random() * Color::random();
+                    Arc::new(Sphere {
+                        center,
+                        radius: 0.2,
+                        material: Arc::new(LambertianMaterial { albedo }),
+                    })
+                } else if choose_material < 0.95 {
+                    // metal
+                    let albedo = Color::random_bounded(0.5, 1.0);
+                    let fuzz = rng.gen_range(0.0..=0.5);
+                    Arc::new(Sphere {
+                        center,
+                        radius: 0.2,
+                        material: Arc::new(MetalMaterial { albedo, fuzz }),
+                    })
+                } else {
+                    // glass
+                    Arc::new(Sphere {
+                        center,
+                        radius: 0.2,
+                        material: Arc::new(DialetricMaterial {
+                            index_of_refraction: 1.5,
+                        }),
+                    })
+                };
+                world.list.push(sphere);
+            }
+        }
+    }
+
+    world.list.push(Arc::new(Sphere {
+        center: Point3::new(0.0, 1.0, 0.0),
+        radius: 1.0,
+        material: Arc::new(DialetricMaterial {
+            index_of_refraction: 1.5,
+        }),
+    }));
+
+    world.list.push(Arc::new(Sphere {
+        center: Point3::new(-4.0, 1.0, 0.0),
+        radius: 1.0,
+        material: Arc::new(LambertianMaterial {
+            albedo: Color::new(0.4, 0.2, 0.1),
+        }),
+    }));
+
+    world.list.push(Arc::new(Sphere {
+        center: Point3::new(4.0, 1.0, 0.0),
+        radius: 1.0,
+        material: Arc::new(MetalMaterial {
+            albedo: Color::new(0.7, 0.6, 0.5),
+            fuzz: 0.0,
+        }),
+    }));
+
+    world
+}
+
 fn app() -> std::io::Result<()> {
     println!("Open file and generate image!");
-    let filename = "Zoom in";
+    let filename = "Final scene";
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -431,11 +531,14 @@ fn app() -> std::io::Result<()> {
     let buf_writer = BufWriter::new(file);
 
     // Image
-    let aspect_ratio = 16.0 / 9.0;
-    let image_width = 400;
+    // let aspect_ratio = 16.0 / 9.0;
+    let aspect_ratio = 3.0 / 2.0;
+    // let image_width = 400;
+    let image_width = 1200;
     // let image_width = 1024;
     let image_height = (image_width as f32 / aspect_ratio) as u32;
-    let samples_per_pixel = 100;
+    // let samples_per_pixel = 100;
+    let samples_per_pixel = 500;
     let mut encoder = png::Encoder::new(buf_writer, image_width, image_height);
     encoder.set_color(png::ColorType::RGB);
     encoder.set_depth(png::BitDepth::Eight);
@@ -444,6 +547,8 @@ fn app() -> std::io::Result<()> {
     let max_depth = 50;
 
     // World
+    let world = random_scene();
+    /*
     let r = (PI / 4.0).cos();
     let material_ground = Arc::new(LambertianMaterial {
         albedo: Color::new(0.8, 0.8, 0.0),
@@ -505,14 +610,27 @@ fn app() -> std::io::Result<()> {
             }),
         ],
     };
+    */
 
     // Camera
+    // Depth of field camera
+    // let look_from = Point3::new(3.0, 3.0, 2.0);
+    let look_from = Point3::new(13.0, 2.0, 3.0);
+    // let look_at = Point3::new(0.0, 0.0, -1.0);
+    let look_at = Point3::new(0.0, 0.0, 0.0);
+    let view_up = Vec3::new(0.0, 1.0, 0.0);
+    // let distance_to_focus = (look_from - look_at).length();
+    let distance_to_focus = 10.0;
+    // let aperture = 2.0;
+    let aperture = 0.1;
     let camera = Camera::new(
-        Point3::new(-2.0, 2.0, 1.0),
-        Point3::new(0.0, 0.0, -1.0),
-        Vec3::new(0.0, 1.0, 0.0),
+        look_from,
+        look_at,
+        view_up,
         20.0,
         aspect_ratio,
+        aperture,
+        distance_to_focus,
     );
 
     // Random
