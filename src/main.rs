@@ -4,6 +4,7 @@ use std::{
     f32::consts::PI,
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
+    iter::Sum,
     rc::Rc,
     sync::Arc,
 };
@@ -447,6 +448,7 @@ fn random_scene() -> HittableList {
     let mut world = HittableList {
         list: Vec::with_capacity(24),
     };
+    world.list.push(ground);
 
     for a in -11..11 {
         for b in -11..11 {
@@ -531,14 +533,14 @@ fn app() -> std::io::Result<()> {
     let buf_writer = BufWriter::new(file);
 
     // Image
-    // let aspect_ratio = 16.0 / 9.0;
-    let aspect_ratio = 3.0 / 2.0;
-    // let image_width = 400;
-    let image_width = 1200;
+    let aspect_ratio = 16.0 / 9.0;
+    // let aspect_ratio = 3.0 / 2.0;
+    let image_width = 800;
+    // let image_width = 1200;
     // let image_width = 1024;
     let image_height = (image_width as f32 / aspect_ratio) as u32;
-    // let samples_per_pixel = 100;
-    let samples_per_pixel = 500;
+    let samples_per_pixel = 100;
+    // let samples_per_pixel = 500;
     let mut encoder = png::Encoder::new(buf_writer, image_width, image_height);
     encoder.set_color(png::ColorType::RGB);
     encoder.set_depth(png::BitDepth::Eight);
@@ -654,6 +656,7 @@ fn app() -> std::io::Result<()> {
                 let ray = camera.get_ray(u, v);
                 pixel_color += ray.color(&world, max_depth);
             }
+
             image_buffer.push(get_color(pixel_color, samples_per_pixel));
         }
     }
